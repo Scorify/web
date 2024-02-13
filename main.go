@@ -12,7 +12,6 @@ import (
 type Schema struct {
 	URL            string `json:"url"`
 	Command        string `json:"command"`
-	HTTPS          bool   `json:"https"`
 	ExpectedOutput string `json:"expected_output"`
 	StatusCode     int    `json:"status_code"`
 }
