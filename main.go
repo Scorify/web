@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/scorify/schema"
-	"golang.org/x/exp/slices"
 )
 
 type Schema struct {
@@ -58,12 +59,9 @@ func Validate(config string) error {
 	return nil
 }
 
-// Run is the function that will get called to run an instance of a check
 func Run(ctx context.Context, config string) error {
-	// Define a new Schema
 	schema := Schema{}
 
-	// Unmarshal the config to the Schema
 	err := json.Unmarshal([]byte(config), &schema)
 	if err != nil {
 		return err
@@ -71,7 +69,7 @@ func Run(ctx context.Context, config string) error {
 
 	var requestType string
 
-	switch strings.ToUpper(schema.Command) {
+	switch schema.Verb {
 	case "GET":
 		requestType = http.MethodGet
 	case "POST":
@@ -91,7 +89,7 @@ func Run(ctx context.Context, config string) error {
 	case "TRACE":
 		requestType = http.MethodTrace
 	default:
-		return fmt.Errorf("provided invalid command/http verb: \"%v\"" + schema.Command)
+		return fmt.Errorf("provided invalid command/http verb: %q" + schema.Verb)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, requestType, schema.URL, nil)
@@ -106,21 +104,50 @@ func Run(ctx context.Context, config string) error {
 	}
 	defer resp.Body.Close()
 
-	if schema.StatusCode != 0 && resp.StatusCode != schema.StatusCode {
-		return fmt.Errorf("expected status code: %v, got: %v", schema.StatusCode, resp.StatusCode)
-	}
-
-	if schema.ExpectedOutput != "" {
-		bodyBytes, err := io.ReadAll(resp.Body)
+	switch schema.MatchType {
+	case "status_code":
+		status_code, err := strconv.Atoi(schema.ExpectedOutput)
 		if err != nil {
-			return fmt.Errorf("encounted error while reading response body: %v", err.Error())
+			return fmt.Errorf("invalid status code provided: %v; %q", schema.ExpectedOutput, err)
 		}
 
-		body := string(bodyBytes)
-
-		if !strings.Contains(body, schema.ExpectedOutput) {
-			return fmt.Errorf("expected output: \"%v\" not found in response body", schema.ExpectedOutput)
+		if resp.StatusCode != status_code {
+			return fmt.Errorf("expected status code: %d; got: %d", status_code, resp.StatusCode)
 		}
+	case "substringMatch":
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if !strings.Contains(string(body), schema.ExpectedOutput) {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	case "exactMatch":
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if string(body) != schema.ExpectedOutput {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	case "regexMatch":
+		pattern, err := regexp.Compile(schema.ExpectedOutput)
+		if err != nil {
+			return fmt.Errorf("invalid regex pattern provided: %v; %q", schema.ExpectedOutput, err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if !pattern.Match(body) {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	default:
+		return fmt.Errorf("invalid match type provided: %v", schema.MatchType)
 	}
 
 	return nil
