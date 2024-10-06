@@ -6,14 +6,56 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/scorify/schema"
+	"golang.org/x/exp/slices"
 )
 
 type Schema struct {
 	URL            string `key:"url"`
-	Command        string `key:"command" default:"GET" enum:"GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS,CONNECT,TRACE"`
+	Verb           string `key:"command" default:"GET" enum:"GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS,CONNECT,TRACE"`
 	ExpectedOutput string `key:"expected_output"`
 	MatchType      string `key:"match_type" default:"status_code" enum:"status_code,substringMatch,exactMatch,regexMatch"`
+}
+
+func Validate(config string) error {
+	conf := Schema{}
+
+	err := schema.Unmarshal([]byte(config), &conf)
+	if err != nil {
+		return err
+	}
+
+	if conf.URL == "" {
+		return fmt.Errorf("url must be provided; got: %v", conf.URL)
+	}
+
+	if !slices.Contains([]string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"}, conf.Verb) {
+		return fmt.Errorf("invalid command provided: %v", conf.Verb)
+	}
+
+	if !slices.Contains([]string{"status_code", "substringMatch", "exactMatch", "regexMatch"}, conf.MatchType) {
+		return fmt.Errorf("invalid match type provided: %v", conf.MatchType)
+	}
+
+	if conf.ExpectedOutput == "" {
+		return fmt.Errorf("expected_output must be provided; got: %v", conf.ExpectedOutput)
+	}
+
+	if conf.MatchType == "status_code" {
+		status_code, err := strconv.Atoi(conf.ExpectedOutput)
+		if err != nil {
+			return fmt.Errorf("invalid status code provided: %v; %q", conf.ExpectedOutput, err)
+		}
+
+		if status_code < 100 || status_code > 599 {
+			return fmt.Errorf("invalid status code provided: %d", status_code)
+		}
+	}
+
+	return nil
 }
 
 // Run is the function that will get called to run an instance of a check
