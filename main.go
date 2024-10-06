@@ -10,10 +10,10 @@ import (
 )
 
 type Schema struct {
-	URL            string `json:"url"`
-	Command        string `json:"command"`
-	ExpectedOutput string `json:"expected_output"`
-	StatusCode     int    `json:"status_code"`
+	URL            string `key:"url"`
+	Command        string `key:"command" default:"GET" enum:"GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS,CONNECT,TRACE"`
+	ExpectedOutput string `key:"expected_output"`
+	MatchType      string `key:"match_type" default:"status_code" enum:"status_code,substringMatch,exactMatch,regexMatch"`
 }
 
 // Run is the function that will get called to run an instance of a check
