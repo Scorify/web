@@ -6,22 +6,62 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/scorify/schema"
 )
 
 type Schema struct {
-	URL            string `json:"url"`
-	Command        string `json:"command"`
-	ExpectedOutput string `json:"expected_output"`
-	StatusCode     int    `json:"status_code"`
+	URL            string `key:"url"`
+	Verb           string `key:"command" default:"GET" enum:"GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS,CONNECT,TRACE"`
+	ExpectedOutput string `key:"expected_output"`
+	MatchType      string `key:"match_type" default:"status_code" enum:"status_code,substringMatch,exactMatch,regexMatch"`
 }
 
-// Run is the function that will get called to run an instance of a check
+func Validate(config string) error {
+	conf := Schema{}
+
+	err := schema.Unmarshal([]byte(config), &conf)
+	if err != nil {
+		return err
+	}
+
+	if conf.URL == "" {
+		return fmt.Errorf("url must be provided; got: %v", conf.URL)
+	}
+
+	if !slices.Contains([]string{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"}, conf.Verb) {
+		return fmt.Errorf("invalid command provided: %v", conf.Verb)
+	}
+
+	if !slices.Contains([]string{"status_code", "substringMatch", "exactMatch", "regexMatch"}, conf.MatchType) {
+		return fmt.Errorf("invalid match type provided: %v", conf.MatchType)
+	}
+
+	if conf.ExpectedOutput == "" {
+		return fmt.Errorf("expected_output must be provided; got: %v", conf.ExpectedOutput)
+	}
+
+	if conf.MatchType == "status_code" {
+		status_code, err := strconv.Atoi(conf.ExpectedOutput)
+		if err != nil {
+			return fmt.Errorf("invalid status code provided: %v; %q", conf.ExpectedOutput, err)
+		}
+
+		if status_code < 100 || status_code > 599 {
+			return fmt.Errorf("invalid status code provided: %d", status_code)
+		}
+	}
+
+	return nil
+}
+
 func Run(ctx context.Context, config string) error {
-	// Define a new Schema
 	schema := Schema{}
 
-	// Unmarshal the config to the Schema
 	err := json.Unmarshal([]byte(config), &schema)
 	if err != nil {
 		return err
@@ -29,7 +69,7 @@ func Run(ctx context.Context, config string) error {
 
 	var requestType string
 
-	switch strings.ToUpper(schema.Command) {
+	switch schema.Verb {
 	case "GET":
 		requestType = http.MethodGet
 	case "POST":
@@ -49,7 +89,7 @@ func Run(ctx context.Context, config string) error {
 	case "TRACE":
 		requestType = http.MethodTrace
 	default:
-		return fmt.Errorf("provided invalid command/http verb: \"%v\"" + schema.Command)
+		return fmt.Errorf("provided invalid command/http verb: %q" + schema.Verb)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, requestType, schema.URL, nil)
@@ -64,21 +104,50 @@ func Run(ctx context.Context, config string) error {
 	}
 	defer resp.Body.Close()
 
-	if schema.StatusCode != 0 && resp.StatusCode != schema.StatusCode {
-		return fmt.Errorf("expected status code: %v, got: %v", schema.StatusCode, resp.StatusCode)
-	}
-
-	if schema.ExpectedOutput != "" {
-		bodyBytes, err := io.ReadAll(resp.Body)
+	switch schema.MatchType {
+	case "status_code":
+		status_code, err := strconv.Atoi(schema.ExpectedOutput)
 		if err != nil {
-			return fmt.Errorf("encounted error while reading response body: %v", err.Error())
+			return fmt.Errorf("invalid status code provided: %v; %q", schema.ExpectedOutput, err)
 		}
 
-		body := string(bodyBytes)
-
-		if !strings.Contains(body, schema.ExpectedOutput) {
-			return fmt.Errorf("expected output: \"%v\" not found in response body", schema.ExpectedOutput)
+		if resp.StatusCode != status_code {
+			return fmt.Errorf("expected status code: %d; got: %d", status_code, resp.StatusCode)
 		}
+	case "substringMatch":
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if !strings.Contains(string(body), schema.ExpectedOutput) {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	case "exactMatch":
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if string(body) != schema.ExpectedOutput {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	case "regexMatch":
+		pattern, err := regexp.Compile(schema.ExpectedOutput)
+		if err != nil {
+			return fmt.Errorf("invalid regex pattern provided: %v; %q", schema.ExpectedOutput, err)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("encountered error while reading response body: %v", err)
+		}
+
+		if !pattern.Match(body) {
+			return fmt.Errorf("expected output not found in response body")
+		}
+	default:
+		return fmt.Errorf("invalid match type provided: %v", schema.MatchType)
 	}
 
 	return nil
