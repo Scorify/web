@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ type Schema struct {
 	Verb           string `key:"verb" default:"GET" enum:"GET,POST,PUT,DELETE,PATCH,HEAD,OPTIONS,CONNECT,TRACE"`
 	ExpectedOutput string `key:"expected_output"`
 	MatchType      string `key:"match_type" default:"statusCode" enum:"statusCode,substringMatch,exactMatch,regexMatch"`
+	Insecure       bool   `key:"insecure"`
 }
 
 func Validate(config string) error {
@@ -96,7 +98,10 @@ func Run(ctx context.Context, config string) error {
 		return fmt.Errorf("encounted error while creating request: %v", err.Error())
 	}
 
-	client := &http.Client{}
+	tls_config := &tls.Config{InsecureSkipVerify: conf.Insecure}
+	http_transpot := &http.Transport{TLSClientConfig: tls_config}
+	client := &http.Client{Transport: http_transpot}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("encounted error while making request: %v", err.Error())
