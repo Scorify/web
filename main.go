@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"bytes"
 
 	"github.com/scorify/schema"
 )
@@ -20,6 +21,8 @@ type Schema struct {
 	ExpectedOutput string `key:"expected_output"`
 	MatchType      string `key:"match_type" default:"statusCode" enum:"statusCode,substringMatch,exactMatch,regexMatch"`
 	Insecure       bool   `key:"insecure"`
+	Body	       string `key:"body"`
+	ContentType    string `key:"content_type" default:"empty" enum:"plain/text,application/json,x-www-form-urlencoded,empty"`
 }
 
 func Validate(config string) error {
@@ -92,10 +95,19 @@ func Run(ctx context.Context, config string) error {
 	default:
 		return fmt.Errorf("provided invalid command/http verb: %q", conf.Verb)
 	}
-
-	req, err := http.NewRequestWithContext(ctx, requestType, conf.URL, nil)
-	if err != nil {
-		return fmt.Errorf("encounted error while creating request: %v", err.Error())
+	
+	if conf.ContentType == "empty"{
+		req, err := http.NewRequestWithContext(ctx, requestType, conf.URL, nil)
+		if err != nil {
+			return fmt.Errorf("encounted error while creating request: %v", err.Error())
+			}
+	}else{
+		body := []byte(conf.Body)
+		req, err := http.NewRequestWithContext(ctx, requestType, conf.URL, bytes.NewBuffer(body))
+		if err != nil {
+			return fmt.Errorf("encounted error while creating request: %v", err.Error())
+		}
+		req.Header.Add("Content-Type",conf.ContentType)
 	}
 
 	tls_config := &tls.Config{InsecureSkipVerify: conf.Insecure}
